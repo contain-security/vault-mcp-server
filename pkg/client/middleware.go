@@ -124,64 +124,53 @@ func (h *securityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.handler.ServeHTTP(w, r)
 }
 
-// VaultContextMiddleware adds Vault-related header values to the request context
-// This middleware extracts Vault configuration from HTTP headers, query parameters,
-// or environment variables and adds them to the request context for use by MCP tools
+// VaultContextMiddleware adds Vault-related header values to the request context.
+// Only values the client actually supplied are placed in the context;
+// environment-variable fallback happens later in the client package, where it
+// can refuse unsafe combinations (e.g. the server's env token paired with a
+// client-supplied Vault address).
+//
+// Security notes:
+//   - The Vault token is accepted from headers only, never query parameters
+//     (they end up in logs and proxies).
+//   - VAULT_ADDR is accepted from headers only. Accepting it from query
+//     parameters allowed any local process to redirect the server's Vault
+//     traffic via a crafted URL.
+//   - VAULT_SKIP_VERIFY is server-side configuration only and is deliberately
+//     not read from the request: a client must not be able to disable TLS
+//     verification of the server's connection to Vault.
 func VaultContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requiredHeaders := []string{VaultAddress, VaultToken, VaultHeaderToken, VaultSkipTLSVerify}
 			ctx := r.Context()
 
-			for _, header := range requiredHeaders {
-				// Priority order: HTTP header -> Query parameter -> Environment variable
-				headerValue := r.Header.Get(textproto.CanonicalMIMEHeaderKey(header))
-
-				// We map the VaultHeaderToken to VaultToken for internal consistency if it's found in the header
-				if header == VaultHeaderToken && headerValue != "" {
-					header = VaultToken
-				}
-
-				// If not found in headers, check query parameters
-				if headerValue == "" {
-					headerValue = r.URL.Query().Get(header)
-
-					// Explicitly disallow VaultToken in query parameters for security reasons
-					if (header == VaultToken || header == VaultHeaderToken) && headerValue != "" {
-						logger.Info(fmt.Sprintf("Vault token was provided in query parameters by client %v, terminating request", r.RemoteAddr))
-						http.Error(w, "Vault token should not be provided in query parameters for security reasons, use the X-Vault-Token header", http.StatusBadRequest)
-						return
-					}
-				}
-
-				// If not found in query parameters, check environment variables
-				if headerValue == "" {
-					headerValue = getEnv(header, "")
-				}
-
-				if headerValue != "" {
-
-					// Add to context using the header name as key
-					ctx = context.WithValue(ctx, contextKey(header), headerValue)
-
-					// Log the source of the configuration (without exposing sensitive values)
-					if (header == VaultToken) && headerValue != "" {
-						logger.Debug("Vault token provided via request context")
-					} else if header == VaultAddress && headerValue != "" {
-						logger.Debug("Vault address configured via request context")
-					}
-				}
+			// Reject tokens in query parameters outright.
+			if r.URL.Query().Get(VaultToken) != "" || r.URL.Query().Get(VaultHeaderToken) != "" {
+				logger.Info(fmt.Sprintf("Vault token was provided in query parameters by client %v, terminating request", r.RemoteAddr))
+				http.Error(w, "Vault token should not be provided in query parameters for security reasons, use the X-Vault-Token header", http.StatusBadRequest)
+				return
 			}
 
-			// Handle namespace separately - only X-Vault-Namespace header or VAULT_NAMESPACE env var
-			namespaceValue := r.Header.Get(textproto.CanonicalMIMEHeaderKey(VaultHeaderNamespace))
-			if namespaceValue == "" {
-				namespaceValue = getEnv(VaultNamespace, "")
+			// Vault address: header only.
+			if addr := r.Header.Get(textproto.CanonicalMIMEHeaderKey(VaultAddress)); addr != "" {
+				ctx = context.WithValue(ctx, contextKey(VaultAddress), addr)
+				logger.Debug("Vault address configured via request header")
 			}
 
-			if namespaceValue != "" {
-				ctx = context.WithValue(ctx, contextKey(VaultNamespace), namespaceValue)
-				logger.Debug("Vault namespace configured via request context")
+			// Vault token: X-Vault-Token (preferred) or VAULT_TOKEN header.
+			token := r.Header.Get(textproto.CanonicalMIMEHeaderKey(VaultHeaderToken))
+			if token == "" {
+				token = r.Header.Get(textproto.CanonicalMIMEHeaderKey(VaultToken))
+			}
+			if token != "" {
+				ctx = context.WithValue(ctx, contextKey(VaultToken), token)
+				logger.Debug("Vault token provided via request header")
+			}
+
+			// Namespace: X-Vault-Namespace header only.
+			if ns := r.Header.Get(textproto.CanonicalMIMEHeaderKey(VaultHeaderNamespace)); ns != "" {
+				ctx = context.WithValue(ctx, contextKey(VaultNamespace), ns)
+				logger.Debug("Vault namespace configured via request header")
 			}
 
 			// Call the next handler with the enriched context

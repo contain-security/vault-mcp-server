@@ -106,17 +106,27 @@ func GetVaultClientFromContext(ctx context.Context, logger *log.Logger) (*api.Cl
 
 func CreateVaultClientForSession(ctx context.Context, session server.ClientSession, logger *log.Logger) (*api.Client, error) {
 
-	// Initialize a new Vault client for this session
+	// Initialize a new Vault client for this session. Context values are only
+	// present when the MCP client supplied them (HTTP headers); otherwise we
+	// fall back to the server's own environment.
 	vaultAddress, ok := ctx.Value(contextKey(VaultAddress)).(string)
-	if !ok || vaultAddress == "" {
+	addressFromClient := ok && vaultAddress != ""
+	if !addressFromClient {
 		vaultAddress = getEnv(VaultAddress, DefaultVaultAddress)
 	}
 
 	vaultToken, ok := ctx.Value(contextKey(VaultToken)).(string)
-	if !ok || vaultToken == "" {
+	tokenFromClient := ok && vaultToken != ""
+	if !tokenFromClient {
+		// Never pair the server's environment token with a client-supplied
+		// Vault address: a session could otherwise point the server at an
+		// attacker-controlled endpoint and have the operator's token sent to
+		// it. Sessions that override VAULT_ADDR must supply their own token.
+		if addressFromClient {
+			return nil, fmt.Errorf("a per-session vault token (X-Vault-Token header) is required when VAULT_ADDR is supplied by the client")
+		}
 		vaultToken = getEnv(VaultToken, "")
 		if vaultToken == "" {
-			//logger.Warn("Vault token not provided for session")
 			return nil, fmt.Errorf("vault token not provided for session")
 		}
 	}
@@ -126,35 +136,18 @@ func CreateVaultClientForSession(ctx context.Context, session server.ClientSessi
 		vaultNamespace = getEnv(VaultNamespace, "")
 	}
 
+	// TLS verification of the server->Vault connection is server-side
+	// configuration only; it is never accepted from the client session.
 	var vaultSkipTLSVerify bool
-	skipProvidedInContext := false
-	skipTLSVal := ctx.Value(contextKey(VaultSkipTLSVerify))
-	if skipTLSVal != nil {
-		skipTLSStr, ok := skipTLSVal.(string)
-		if ok {
-			parsed, err := strconv.ParseBool(skipTLSStr)
-			if err != nil {
-				logger.WithFields(log.Fields{
-					"session_id": session.SessionID(),
-					"value":      skipTLSStr,
-				}).Warn("Invalid boolean value for VaultSkipTLSVerify in context; falling back to VAULT_SKIP_VERIFY or its default")
-			} else {
-				vaultSkipTLSVerify = parsed
-				skipProvidedInContext = true
-			}
-		}
-	}
-	if !skipProvidedInContext {
-		envVal := getEnv(VaultSkipTLSVerify, "false")
-		parsed, err := strconv.ParseBool(envVal)
-		if err != nil {
-			logger.WithFields(log.Fields{
-				"session_id": session.SessionID(),
-				"value":      envVal,
+	envVal := getEnv(VaultSkipTLSVerify, "false")
+	parsed, err := strconv.ParseBool(envVal)
+	if err != nil {
+		logger.WithFields(log.Fields{
+			"session_id": session.SessionID(),
+			"value":      envVal,
 		}).Warn("Invalid boolean value for VAULT_SKIP_VERIFY; using default value false")
-		} else {
-			vaultSkipTLSVerify = parsed
-		}
+	} else {
+		vaultSkipTLSVerify = parsed
 	}
 
 	newClient, err := NewVaultClient(session.SessionID(), vaultAddress, vaultSkipTLSVerify, vaultToken, vaultNamespace)

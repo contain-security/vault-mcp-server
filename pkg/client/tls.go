@@ -77,10 +77,12 @@ func GetTLSConfigFromEnv() (*TLSConfig, error) {
 }
 
 func IsLocalHost(host string) bool {
+	// Note: 0.0.0.0 is deliberately NOT treated as localhost — it binds all
+	// interfaces, so exempting it from the TLS requirement would allow
+	// plaintext traffic on the LAN.
 	h := strings.ToLower(host)
 	return h == "localhost" ||
 		h == "127.0.0.1" ||
 		h == "::1" ||
-		h == "[::1]" ||
-		h == "0.0.0.0"
+		h == "[::1]"
 }

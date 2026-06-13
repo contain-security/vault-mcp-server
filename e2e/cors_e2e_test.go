@@ -93,6 +93,9 @@ func startHTTPContainerWithCORS(t *testing.T, port, mode, origins string) string
 		"docker", "run", "-d", "--rm",
 		"-e", "TRANSPORT_MODE=http",
 		"-e", "TRANSPORT_HOST=0.0.0.0",
+		// Containers must bind all interfaces for port mapping; the server
+		// requires this explicit opt-in to serve plaintext on 0.0.0.0.
+		"-e", "MCP_ALLOW_INSECURE_TRANSPORT=true",
 		"-e", "MCP_SESSION_MODE=stateful",
 		"-e", "MCP_RATE_LIMIT_GLOBAL=50:100",
 		"-e", fmt.Sprintf("MCP_CORS_MODE=%s", mode),
