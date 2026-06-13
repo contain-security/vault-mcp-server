@@ -21,6 +21,16 @@ func init() {
 	rootCmd.SetVersionTemplate("{{.Short}}\n{{.Version}}\n")
 	rootCmd.PersistentFlags().String("log-file", "", "Path to log file")
 
+	// Security gating flags. Each can also be enabled via environment
+	// variable (VAULT_MCP_READ_ONLY, VAULT_MCP_ADMIN_TOOLS,
+	// VAULT_MCP_AUDIT_TOOLS); flag or env enables the behavior.
+	rootCmd.PersistentFlags().Bool("read-only", false,
+		"Run in read-only mode: tools that alter Vault or mint credentials are not registered and are blocked at call time")
+	rootCmd.PersistentFlags().Bool("admin-tools", false,
+		"Enable admin tools (ACL policies, auth methods, AppRole, tokens, identity, leases)")
+	rootCmd.PersistentFlags().Bool("audit-tools", false,
+		"Enable audit device management tools")
+
 	// Add StreamableHTTP command flags (avoid 'h' shorthand conflict with help)
 	streamableHTTPCmd.Flags().String("transport-host", DefaultBindAddress, "Host to bind to")
 	streamableHTTPCmd.Flags().StringP("transport-port", "p", DefaultBindPort, "Port to listen on")
@@ -34,6 +44,10 @@ func init() {
 	rootCmd.AddCommand(stdioCmd)
 	rootCmd.AddCommand(streamableHTTPCmd)
 	rootCmd.AddCommand(httpCmdAlias) // Add the alias for backward compatibility
+
+	// Expose the security flags to loadServerConfig without creating an
+	// initialization cycle on rootCmd.
+	securityFlags = rootCmd.PersistentFlags()
 }
 
 func initConfig() {
