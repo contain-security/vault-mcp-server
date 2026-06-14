@@ -1,6 +1,12 @@
 # <img src="public/images/Vault-LogoMark_onDark.svg" width="30" align="left" style="margin-right: 12px;"/> Vault MCP Server
 
-The Vault MCP Server is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction)
+> ## ⚠️ Independent fork — not a HashiCorp or IBM release
+>
+> This repository is a **fork of [`hashicorp/vault-mcp-server`](https://github.com/hashicorp/vault-mcp-server)**, independently maintained by **[contain.security](https://github.com/contain-security)**. It has been **substantially modified** beyond the upstream project — adding opt-in admin/audit tool tiers, a default-deny [read-only mode](#security-model), guard-railed token & credential tooling, and least-privilege [workflow prompts](#prompts).
+>
+> It is **not affiliated with, endorsed by, or supported by HashiCorp or IBM.** "HashiCorp" and "Vault" are trademarks of HashiCorp; used here only to describe interoperability. This fork is distributed under the same [Mozilla Public License 2.0](LICENSE) as the upstream project.
+
+This fork of the Vault MCP Server is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction)
 server implementation that provides integration with HashiCorp
 Vault for managing secrets and mounts. This server uses both stdio and StreamableHTTP
 transports for MCP communication, making it compatible with Claude for Desktop 
@@ -513,6 +519,18 @@ vault-mcp-server/
 
 ## Support
 
-For bug reports and feature requests, please open an [issue on GitHub](https://github.com/hashicorp/vault-mcp-server/issues).
+This fork is maintained by **[contain.security](https://github.com/contain-security)**. For bug reports and feature requests **specific to this fork**, please open an [issue on this repository](https://github.com/contain-security/vault-mcp-server/issues).
 
-For general questions and discussions, open a GitHub Discussion.
+For questions about the original, unmodified Vault MCP Server, refer to the [upstream project](https://github.com/hashicorp/vault-mcp-server).
+
+## Upstream & attribution
+
+This project is a fork of [`hashicorp/vault-mcp-server`](https://github.com/hashicorp/vault-mcp-server),
+© HashiCorp, Inc., licensed under the [Mozilla Public License 2.0](LICENSE). Files
+modified by this fork retain that license; substantial functionality has been
+added and changed by [contain.security](https://github.com/contain-security) (see
+[Features](#features) and [Security model](#security-model)).
+
+"HashiCorp", "Vault", and related marks and logos are trademarks of HashiCorp and
+are used here solely to describe interoperability. This fork is not affiliated with,
+endorsed by, or supported by HashiCorp or IBM.
