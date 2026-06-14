@@ -1,4 +1,4 @@
-// Copyright IBM Corp. 2025
+// Copyright IBM Corp. 2025, 2026
 // SPDX-License-Identifier: MPL-2.0
 
 package sys
@@ -14,6 +14,18 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// allowedMountTypes is the allowlist of secrets engine types that
+// create_mount is permitted to enable.
+var allowedMountTypes = map[string]bool{
+	"kv":       true,
+	"kv2":      true,
+	"transit":  true,
+	"pki":      true,
+	"ssh":      true,
+	"database": true,
+	"totp":     true,
+}
+
 // CreateMount creates a tool for creating Vault mounts
 func CreateMount(logger *log.Logger) server.ServerTool {
 	return server.ServerTool{
@@ -27,8 +39,8 @@ func CreateMount(logger *log.Logger) server.ServerTool {
 			),
 			mcp.WithString("type",
 				mcp.Required(),
-				mcp.Enum("kv", "kv2"),
-				mcp.Description("The type of mount. Examples would be 'kv' or 'kv2' for a versioned kv store."),
+				mcp.Enum("kv", "kv2", "transit", "pki", "ssh", "database", "totp"),
+				mcp.Description("The type of secrets engine to mount. Supported types: 'kv' (unversioned key/value), 'kv2' (versioned key/value), 'transit' (encryption as a service), 'pki' (X.509 certificates), 'ssh' (SSH credentials), 'database' (dynamic database credentials), 'totp' (time-based one-time passwords)."),
 			),
 			mcp.WithString("path",
 				mcp.Required(),
@@ -57,8 +69,8 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 
 	if req.Params.Arguments != nil {
 		if args, ok := req.Params.Arguments.(map[string]interface{}); ok {
-			if mountType, ok = args["type"].(string); !ok || mountType == "" || (mountType != "kv" && mountType != "kv2") {
-				return mcp.NewToolResultError("Missing or invalid 'type' parameter"), nil
+			if mountType, ok = args["type"].(string); !ok || mountType == "" || !allowedMountTypes[mountType] {
+				return mcp.NewToolResultError("Missing or invalid 'type' parameter, supported types are: kv, kv2, transit, pki, ssh, database, totp"), nil
 			}
 
 			if path, ok = args["path"].(string); !ok || path == "" {
@@ -111,8 +123,9 @@ func createMountHandler(ctx context.Context, req mcp.CallToolRequest, logger *lo
 	if mountType == "kv2" {
 		mountInput.Options = make(map[string]string)
 		mountInput.Type = "kv"
-		if options != nil {
-			for key, value := range options.(map[string]interface{}) {
+		// options is untyped JSON from the client; only treat it as a map.
+		if optMap, ok := options.(map[string]interface{}); ok {
+			for key, value := range optMap {
 				if s, ok := value.(string); ok {
 					mountInput.Options[key] = s
 				}

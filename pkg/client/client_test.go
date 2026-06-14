@@ -107,7 +107,7 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		DeleteVaultClient(session.id)
 	})
 
-	t.Run("context true takes precedence over env false", func(t *testing.T) {
+	t.Run("client-supplied skip-verify is ignored when env is false", func(t *testing.T) {
 		t.Setenv(VaultSkipTLSVerify, "false")
 
 		ctxVals := map[contextKey]string{
@@ -118,11 +118,11 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		session := &mockClientSession{id: "test-ctx-true-env-false"}
 		client, err := CreateVaultClientForSession(newCtx(ctxVals), session, logger)
 		assert.NoError(t, err)
-		assert.True(t, getTLSSkip(t, client), "context true should win over env false")
+		assert.False(t, getTLSSkip(t, client), "skip-verify is server-side config only; client context must be ignored")
 		DeleteVaultClient(session.id)
 	})
 
-	t.Run("context false takes precedence over env true", func(t *testing.T) {
+	t.Run("client-supplied skip-verify is ignored when env is true", func(t *testing.T) {
 		t.Setenv(VaultSkipTLSVerify, "true")
 
 		ctxVals := map[contextKey]string{
@@ -133,7 +133,7 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		session := &mockClientSession{id: "test-ctx-false-env-true"}
 		client, err := CreateVaultClientForSession(newCtx(ctxVals), session, logger)
 		assert.NoError(t, err)
-		assert.False(t, getTLSSkip(t, client), "context false should win over env true")
+		assert.True(t, getTLSSkip(t, client), "skip-verify is server-side config only; client context must be ignored")
 		DeleteVaultClient(session.id)
 	})
 
@@ -153,18 +153,63 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		DeleteVaultClient(session.id)
 	})
 
-	t.Run("invalid context value falls back to env", func(t *testing.T) {
-		t.Setenv(VaultSkipTLSVerify, "true")
+	t.Run("invalid env value fails client creation", func(t *testing.T) {
+		// vault/api's DefaultConfig also parses VAULT_SKIP_VERIFY and refuses
+		// an unparseable value — client creation fails closed.
+		t.Setenv(VaultSkipTLSVerify, "not-a-bool")
+
+		session := &mockClientSession{id: "test-invalid-env"}
+		client, err := CreateVaultClientForSession(newCtx(baseCtx), session, logger)
+		assert.Error(t, err, "invalid VAULT_SKIP_VERIFY should fail client creation")
+		assert.Nil(t, client)
+	})
+}
+
+func TestCreateVaultClientForSession_EnvTokenPairing(t *testing.T) {
+	logger := log.New()
+	logger.SetLevel(log.ErrorLevel)
+
+	newCtx := func(vals map[contextKey]string) context.Context {
+		ctx := context.Background()
+		for k, v := range vals {
+			ctx = context.WithValue(ctx, k, v)
+		}
+		return ctx
+	}
+
+	t.Run("env token is refused when address is client-supplied", func(t *testing.T) {
+		t.Setenv(VaultToken, "operator-env-token")
 
 		ctxVals := map[contextKey]string{
-			contextKey(VaultAddress):      "http://127.0.0.1:8200",
-			contextKey(VaultToken):        "test-token",
-			contextKey(VaultSkipTLSVerify): "not-a-bool",
+			contextKey(VaultAddress): "http://attacker.example.com:8200",
 		}
-		session := &mockClientSession{id: "test-invalid-ctx"}
+		session := &mockClientSession{id: "test-env-token-client-addr"}
+		client, err := CreateVaultClientForSession(newCtx(ctxVals), session, logger)
+		assert.Error(t, err, "the server's env token must never be sent to a client-chosen address")
+		assert.Nil(t, client)
+	})
+
+	t.Run("client-supplied address with client-supplied token is allowed", func(t *testing.T) {
+		t.Setenv(VaultToken, "operator-env-token")
+
+		ctxVals := map[contextKey]string{
+			contextKey(VaultAddress): "http://127.0.0.1:8200",
+			contextKey(VaultToken):   "session-token",
+		}
+		session := &mockClientSession{id: "test-client-addr-client-token"}
 		client, err := CreateVaultClientForSession(newCtx(ctxVals), session, logger)
 		assert.NoError(t, err)
-		assert.True(t, getTLSSkip(t, client), "invalid context should fall back to env=true")
+		assert.NotNil(t, client)
+		DeleteVaultClient(session.id)
+	})
+
+	t.Run("env token with env address is allowed", func(t *testing.T) {
+		t.Setenv(VaultToken, "operator-env-token")
+
+		session := &mockClientSession{id: "test-env-token-env-addr"}
+		client, err := CreateVaultClientForSession(newCtx(nil), session, logger)
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
 		DeleteVaultClient(session.id)
 	})
 }
@@ -193,14 +238,15 @@ func TestVaultNamespaceSupport(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 
-	t.Run("namespace via environment variable", func(t *testing.T) {
+	t.Run("namespace env var is not injected by middleware", func(t *testing.T) {
+		// Env fallback happens at client creation, not in the middleware.
 		os.Setenv(VaultNamespace, "env-namespace")
 		defer os.Unsetenv(VaultNamespace)
 
 		mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 			namespace := ctx.Value(contextKey(VaultNamespace))
-			assert.Equal(t, "env-namespace", namespace)
+			assert.Nil(t, namespace)
 			w.WriteHeader(http.StatusOK)
 		})
 

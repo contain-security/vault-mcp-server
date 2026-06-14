@@ -12,11 +12,14 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/hashicorp/vault-mcp-server/pkg/client"
+	"github.com/hashicorp/vault-mcp-server/pkg/config"
+	"github.com/hashicorp/vault-mcp-server/pkg/prompts"
 	"github.com/hashicorp/vault-mcp-server/pkg/tools"
 
 	"github.com/hashicorp/vault-mcp-server/version"
@@ -24,6 +27,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 const (
@@ -110,12 +114,58 @@ You can specify the host, port, and endpoint path to customize where the server 
 	}
 )
 
+// securityFlags is set in init() to the root command's persistent flag set.
+// It is accessed via this variable (rather than rootCmd directly) to avoid a
+// package initialization cycle: rootCmd's initializer references the run
+// functions, which call loadServerConfig.
+var securityFlags *pflag.FlagSet
+
+// loadServerConfig builds the security configuration from the environment
+// and CLI flags (either source can enable a gate). Invalid configuration is
+// a fatal startup error — the server fails closed rather than guessing.
+func loadServerConfig(logger *log.Logger) (config.Config, error) {
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return config.Config{}, err
+	}
+
+	if securityFlags != nil {
+		if v, err := securityFlags.GetBool("read-only"); err == nil && v {
+			cfg.ReadOnly = true
+		}
+		if v, err := securityFlags.GetBool("admin-tools"); err == nil && v {
+			cfg.AdminTools = true
+		}
+		if v, err := securityFlags.GetBool("audit-tools"); err == nil && v {
+			cfg.AuditTools = true
+		}
+	}
+
+	logger.WithFields(log.Fields{
+		"read_only":   cfg.ReadOnly,
+		"admin_tools": cfg.AdminTools,
+		"audit_tools": cfg.AuditTools,
+	}).Info("Loaded server security configuration")
+
+	if cfg.ReadOnly {
+		logger.Info("Read-only mode is ON: mutating and credential-minting tools are disabled")
+	}
+
+	return cfg, nil
+}
+
 func runHTTPServer(logger *log.Logger, host string, port string, endpointPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	hcServer := NewServer(version.Version, logger)
-	tools.InitTools(hcServer, logger)
+	cfg, err := loadServerConfig(logger)
+	if err != nil {
+		return fmt.Errorf("invalid server configuration: %w", err)
+	}
+
+	hcServer := NewServer(version.Version, logger, cfg)
+	tools.InitTools(hcServer, logger, cfg)
+	prompts.InitPrompts(hcServer, logger, cfg)
 
 	return httpServerInit(ctx, hcServer, logger, host, port, endpointPath)
 }
@@ -199,9 +249,17 @@ func httpServerInit(ctx context.Context, hcServer *server.MCPServer, logger *log
 		logger.Infof("TLS enabled with certificate: %s", tlsConfig.CertFile)
 	} else {
 		if !client.IsLocalHost(host) {
-			return fmt.Errorf("TLS is required for non-localhost binding (%s). Set MCP_TLS_CERT_FILE and MCP_TLS_KEY_FILE environment variables", host)
+			// 0.0.0.0 is deliberately not exempt: it exposes plaintext,
+			// admin-capable traffic on every interface. Containerized
+			// deployments that terminate TLS elsewhere must opt in
+			// explicitly.
+			if allowInsecure, _ := strconv.ParseBool(os.Getenv("MCP_ALLOW_INSECURE_TRANSPORT")); !allowInsecure {
+				return fmt.Errorf("TLS is required for non-localhost binding (%s). Set MCP_TLS_CERT_FILE and MCP_TLS_KEY_FILE, or set MCP_ALLOW_INSECURE_TRANSPORT=true only if TLS is terminated by a trusted proxy", host)
+			}
+			logger.Warnf("MCP_ALLOW_INSECURE_TRANSPORT is set: serving plaintext HTTP on non-localhost binding %s. Do NOT use this outside a trusted network with external TLS termination", host)
+		} else {
+			logger.Warnf("TLS is disabled on StreamableHTTP server; this is not recommended for production")
 		}
-		logger.Warnf("TLS is disabled on StreamableHTTP server; this is not recommended for production")
 	}
 
 	// Start server in goroutine
@@ -231,22 +289,35 @@ func runStdioServer(logger *log.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	hcServer := NewServer(version.Version, logger)
-	tools.InitTools(hcServer, logger)
+	cfg, err := loadServerConfig(logger)
+	if err != nil {
+		return fmt.Errorf("invalid server configuration: %w", err)
+	}
+
+	hcServer := NewServer(version.Version, logger, cfg)
+	tools.InitTools(hcServer, logger, cfg)
+	prompts.InitPrompts(hcServer, logger, cfg)
 
 	return serverInit(ctx, hcServer, logger)
 }
 
-func NewServer(version string, logger *log.Logger, opts ...server.ServerOption) *server.MCPServer {
+func NewServer(version string, logger *log.Logger, cfg config.Config, opts ...server.ServerOption) *server.MCPServer {
 	// Create rate limiting middleware with environment-based configuration
 	rateLimitConfig := client.LoadRateLimitConfigFromEnv()
 	rateLimitMiddleware := client.NewRateLimitMiddleware(rateLimitConfig, logger)
 
-	// Add default options
+	// Add default options. The read-only guard is the call-time enforcement
+	// layer for read-only mode; mutating tools are additionally never
+	// registered (see pkg/tools).
 	defaultOpts := []server.ServerOption{
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
+		server.WithPromptCapabilities(false),
+		// Recover from a panic in any tool handler so a single malformed
+		// request cannot crash the process (relevant under stdio transport).
+		server.WithRecovery(),
 		server.WithToolHandlerMiddleware(rateLimitMiddleware.Middleware()),
+		server.WithToolHandlerMiddleware(tools.ReadOnlyGuardMiddleware(cfg.ReadOnly, logger)),
 	}
 	opts = append(defaultOpts, opts...)
 
