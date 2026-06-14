@@ -23,10 +23,10 @@ type fakeSession struct {
 	notifCh chan mcp.JSONRPCNotification
 }
 
-func (f fakeSession) Initialize()                                        {}
-func (f fakeSession) Initialized() bool                                  { return true }
+func (f fakeSession) Initialize()                                         {}
+func (f fakeSession) Initialized() bool                                   { return true }
 func (f fakeSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return f.notifCh }
-func (f fakeSession) SessionID() string                                  { return f.id }
+func (f fakeSession) SessionID() string                                   { return f.id }
 
 // newTestContext creates a context wired to a mock Vault HTTP server.
 // The returned cleanup function must be deferred.
