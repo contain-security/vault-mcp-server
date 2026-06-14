@@ -65,10 +65,12 @@ type mockClientSession struct {
 	id string
 }
 
-func (m *mockClientSession) Initialize()                                        {}
-func (m *mockClientSession) Initialized() bool                                  { return true }
-func (m *mockClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return make(chan mcp.JSONRPCNotification, 1) }
-func (m *mockClientSession) SessionID() string                                  { return m.id }
+func (m *mockClientSession) Initialize()       {}
+func (m *mockClientSession) Initialized() bool { return true }
+func (m *mockClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return make(chan mcp.JSONRPCNotification, 1)
+}
+func (m *mockClientSession) SessionID() string { return m.id }
 
 func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	logger := log.New()
@@ -111,8 +113,8 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		t.Setenv(VaultSkipTLSVerify, "false")
 
 		ctxVals := map[contextKey]string{
-			contextKey(VaultAddress):      "http://127.0.0.1:8200",
-			contextKey(VaultToken):        "test-token",
+			contextKey(VaultAddress):       "http://127.0.0.1:8200",
+			contextKey(VaultToken):         "test-token",
 			contextKey(VaultSkipTLSVerify): "true",
 		}
 		session := &mockClientSession{id: "test-ctx-true-env-false"}
@@ -126,8 +128,8 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 		t.Setenv(VaultSkipTLSVerify, "true")
 
 		ctxVals := map[contextKey]string{
-			contextKey(VaultAddress):      "http://127.0.0.1:8200",
-			contextKey(VaultToken):        "test-token",
+			contextKey(VaultAddress):       "http://127.0.0.1:8200",
+			contextKey(VaultToken):         "test-token",
 			contextKey(VaultSkipTLSVerify): "false",
 		}
 		session := &mockClientSession{id: "test-ctx-false-env-true"}

@@ -137,7 +137,7 @@ func TestSetupPkiApprole_MissingRequired(t *testing.T) {
 func TestSetupSshApprole_RendersLeastPrivilege(t *testing.T) {
 	h := handlerFor(t, "setup_ssh_approle")
 	result, err := h(context.Background(), newPromptRequest(map[string]string{
-		"app_name": "bastion",
+		"app_name":  "bastion",
 		"ssh_mount": "ssh-client-ca",
 		"ssh_role":  "clients",
 	}))
