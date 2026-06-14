@@ -16,7 +16,7 @@ RUN apk add --no-cache ca-certificates
 
 # devbuild compiles the binary
 # -----------------------------------
-FROM golang:1.25.5-alpine@sha256:ac09a5f469f307e5da71e766b0bd59c9c49ea460a528cc3e6686513d64a6f1fb AS devbuild
+FROM golang:1.25.11-alpine@sha256:8d95af53d0d58e1759ddb4028285d9b1239067e4fbf4f544618cad0f60fbc354 AS devbuild
 ARG VERSION="dev"
 # Set the working directory
 WORKDIR /build
