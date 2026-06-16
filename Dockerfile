@@ -11,7 +11,7 @@
 # ===================================
 
 # certbuild captures the ca-certificates
-FROM docker.mirror.hashicorp.services/alpine:3.22@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1 AS certbuild
+FROM alpine:3.22@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1 AS certbuild
 RUN apk add --no-cache ca-certificates
 
 # devbuild compiles the binary
@@ -31,14 +31,19 @@ RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -ldfl
 
 # dev runs the binary from devbuild
 # -----------------------------------
-# Make a stage to run the app
-FROM scratch AS dev
+# Run the app on a full Alpine base (gives a shell + apk for debugging) instead
+# of scratch. ca-certificates come from the distro rather than the certbuild
+# stage, and the server runs as a non-root user.
+FROM alpine:3.22@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1 AS dev
 ARG VERSION="dev"
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S vault-mcp \
+    && adduser -S -G vault-mcp -h /server vault-mcp
 # Set the working directory
 WORKDIR /server
 # Copy the binary from the build stage
 COPY --from=devbuild /build/vault-mcp-server .
-COPY --from=certbuild /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+USER vault-mcp
 # Command to run the server
 CMD ["./vault-mcp-server", "stdio"]
 
