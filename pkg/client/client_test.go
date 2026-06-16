@@ -167,6 +167,44 @@ func TestCreateVaultClientForSession_SkipTLSVerify(t *testing.T) {
 	})
 }
 
+// TestNewVaultClient_HonorsVaultCACert is a regression test. NewVaultClient
+// previously replaced config.HttpClient with a fresh transport, discarding the
+// CA pool that api.DefaultConfig() loads from VAULT_CACERT — so pinning a
+// self-signed CA silently had no effect and skip-verify was the only working
+// TLS option. The CA must now reach the client's TLS RootCAs.
+func TestNewVaultClient_HonorsVaultCACert(t *testing.T) {
+	tmpCA, err := os.CreateTemp("", "vault_ca_*.pem")
+	if err != nil {
+		t.Fatalf("create temp CA file: %v", err)
+	}
+	defer os.Remove(tmpCA.Name())
+	if _, err := tmpCA.WriteString(certPEM); err != nil {
+		t.Fatalf("write CA file: %v", err)
+	}
+	if err := tmpCA.Close(); err != nil {
+		t.Fatalf("close CA file: %v", err)
+	}
+
+	t.Setenv("VAULT_CACERT", tmpCA.Name())
+
+	const sid = "test-cacert"
+	client, err := NewVaultClient(sid, "https://127.0.0.1:8200", false, "test-token", "")
+	assert.NoError(t, err)
+	if !assert.NotNil(t, client) {
+		return
+	}
+	defer DeleteVaultClient(sid)
+
+	tr, ok := client.CloneConfig().HttpClient.Transport.(*http.Transport)
+	if !assert.True(t, ok, "expected *http.Transport") || !assert.NotNil(t, tr.TLSClientConfig) {
+		return
+	}
+	assert.NotNil(t, tr.TLSClientConfig.RootCAs,
+		"VAULT_CACERT must populate the client's RootCAs (regression: it used to be discarded)")
+	assert.False(t, tr.TLSClientConfig.InsecureSkipVerify,
+		"verification must stay on when only VAULT_CACERT is set")
+}
+
 func TestCreateVaultClientForSession_EnvTokenPairing(t *testing.T) {
 	logger := log.New()
 	logger.SetLevel(log.ErrorLevel)

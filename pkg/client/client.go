@@ -5,9 +5,7 @@ package client
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -45,14 +43,23 @@ func getEnv(key, fallback string) string {
 
 // NewVaultClient creates a new Vault client for the given session
 func NewVaultClient(sessionId string, vaultAddress string, vaultSkipTLSVerify bool, vaultToken string, vaultNamespace string) (*api.Client, error) {
-	// Initialize Vault client
+	// Initialize Vault client. api.DefaultConfig() reads the standard Vault TLS
+	// environment (VAULT_CACERT, VAULT_CAPATH, VAULT_CLIENT_CERT,
+	// VAULT_CLIENT_KEY, VAULT_TLS_SERVER_NAME) and loads it into the client's
+	// TLS config; an unparseable value is surfaced below by api.NewClient.
 	config := api.DefaultConfig()
 	config.Address = vaultAddress
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: vaultSkipTLSVerify},
+	// Layer the operator's skip-verify decision on top of that config. We must
+	// NOT replace config.HttpClient here: doing so would throw away the CA pool
+	// loaded above, leaving VAULT_CACERT (pinning a self-signed CA) silently
+	// ineffective. ConfigureTLS only flips InsecureSkipVerify and leaves the
+	// configured RootCAs intact.
+	if vaultSkipTLSVerify {
+		if err := config.ConfigureTLS(&api.TLSConfig{Insecure: true}); err != nil {
+			return nil, fmt.Errorf("failed to apply VAULT_SKIP_VERIFY: %w", err)
+		}
 	}
-	config.HttpClient = &http.Client{Transport: tr}
 
 	client, err := api.NewClient(config)
 	if err != nil {
