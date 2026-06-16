@@ -49,3 +49,4 @@ dist/
 .env.local
 /.opencode
 /.claude
+CLAUDE.md
