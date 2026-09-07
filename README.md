@@ -94,7 +94,7 @@ credential itself — enters the LLM conversation context. Strongly recommended.
   precisely so this stays a deliberate human decision.
 
 ## Prerequisites
-- Go 1.24 or later (if building from source)
+- Go 1.25.12 or later (if building from source)
 - Docker
 - HashiCorp Vault server running locally or remotely
 - A valid Vault token with appropriate permissions
